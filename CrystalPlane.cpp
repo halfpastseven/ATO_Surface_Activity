@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <string>
 #include <cmath>
-#define SMALL 0.0001
+//#define SMALL 0.0001
 using namespace std;
 
 /* Symbol Conventions:
@@ -28,8 +28,12 @@ int Alo = -50; //Lattice Size, default
 int Ahi = 50;
 int Blo = -50;
 int Bhi = 50;
-int Clo = -30;
-int Chi = 30;
+int Clo = -100;
+int Chi = 100;
+
+inline int Round_Int (float x){
+	return (x>0) ? (x+0.5) : (x-0.5);
+}
 
 struct atom{
 	atom():A(0),B(0),C(0), Flags(0){};
@@ -47,18 +51,26 @@ struct atom{
 };
 
 struct plane {
-	plane (int h, int k, int l, const atom& base):H(h),K(k),L(l),Base(base){}
+	plane (int h, int k, int l, const atom& base):H(h),K(k),L(l),Base(base){
+		HKL_Square = H*H+K*K+L*L;
+	}
 	
 	inline float assessPlane (const atom& At) const{
-		return int(((At.A-Base.A) * H + (At.B-Base.B)*K + (At.C-Base.C)*L +SMALL) * 100 );
+		return Round_Int(((At.A-Base.A) * H + (At.B-Base.B)*K + (At.C-Base.C)*L) * 100 );
+	}
+	
+	inline float assessSquareDistanceToPlane (const atom& At) const{
+		float SqrDis = (At.A-Base.A)*H + (At.B-Base.B)*K + (At.C-Base.C)*L;
+		return SqrDis*SqrDis / HKL_Square;
 	}
 
 	int H;
 	int K;
 	int L;
 	atom Base; 
-	inline float Sqr () const {return (H*H+K*K+L*L);}
-	inline float Abs () const {return sqrt(H*H+K*K+L*L);}
+	int HKL_Square;
+	inline float Sqr () const {return (HKL_Square);}
+	inline float Abs () const {return sqrt(HKL_Square);}
 };
 
 enum atomType{
@@ -94,24 +106,24 @@ float addSb (float Level){//Responsible for randomly replacing Sn with Sb
 vector <float> assess(const plane& P);
 //Responsible for assessing the activity of planes
 
-bool fSame (float f1, float f2) {return !(int ((f1-f2+SMALL)*1000));}
-bool isZero (float f1) {return !(int ((f1+SMALL)*1000));}
+bool fSame (float f1, float f2) {return !(Round_Int ((f1-f2)*1000));}
+bool isZero (float f1) {return !(Round_Int (f1*1000));}
 
 inline int search(float A, float B, float C){
-	if ((A+SMALL)<Alo||(A-SMALL)>Ahi||
-		(B+SMALL)<Alo||(B-SMALL)>Bhi||
-		(C+SMALL)<Alo||(C-SMALL)>Chi) return -1;
+	if (Round_Int(A)<Alo||Round_Int(A)>Ahi||
+		Round_Int(B)<Alo||Round_Int(B)>Bhi||
+		Round_Int(C)<Alo||Round_Int(C)>Chi) return -1;
 		
-	if (int (A*2 + SMALL) % 2) {// The atom is a centre atom
+	if (Round_Int (A*2) % 2) {// The atom is a centre atom "half"
 		return (Ahi-Alo+1)*(Bhi-Blo+1)*(Chi-Clo+1) 
-				+ (int(A)-Alo)*(Bhi-Blo)*(Chi-Clo) 
-				+ (int(B)-Blo)*(Chi-Clo)
-				+ (int(C)-Clo);
+				+ (Round_Int(A-0.5)-Alo)*(Bhi-Blo)*(Chi-Clo) 
+				+ (Round_Int(B-0.5)-Blo)*(Chi-Clo)
+				+ (Round_Int(C-0.5)-Clo); 
 	}
-	else{
-		return (int(A+SMALL)-Alo)*(Bhi-Blo+1)*(Chi-Clo+1) 
-				+ (int(B+SMALL)-Blo)*(Chi-Clo+1)
-				+ (int(C+SMALL)-Clo);
+	else{// The atom is a corner atom "integral"
+		return (Round_Int(A)-Alo)*(Bhi-Blo+1)*(Chi-Clo+1) 
+				+ (Round_Int(B)-Blo)*(Chi-Clo+1)
+				+ (Round_Int(C)-Clo);
 	}
 }
 
@@ -195,10 +207,7 @@ int  PrepareLattice (
 
 vector<float> assess(const plane& P){ //Assess the atom flags with respect to plane
 
-
-
 	vector <size_t> atomsInPlane;
-	//vector <size_t> OInPlane;
 	
 	for (int iA=0; iA<Atoms.size(); iA++){
 		int PositionToPlane = P.assessPlane(Atoms[iA]);
@@ -208,9 +217,18 @@ vector<float> assess(const plane& P){ //Assess the atom flags with respect to pl
 		}
 		else if (PositionToPlane<0) Atoms[iA].Flags|=Under_Plane;
 	}
+
 	//Assess the activity around Sb.
+	int Cnt = 0;
 	for (int iSb=0; iSb<Sb.size(); iSb++){
 		
+		const float Threshold = 1.1;
+		/* Add an assessment of atom with respect to the distance of the plane */
+		float SquareDistance = P.assessSquareDistanceToPlane (Atoms[Sb[iSb]]);
+		
+		if (SquareDistance > Threshold*Threshold ||
+				(!(Atoms[Sb[iSb]].Flags & (In_Plane|Under_Plane)))) continue;
+
 		const size_t NofPerihperals(10); //Number of peripheral Sn/Sb atoms
 		
 		atom Peripheral [NofPerihperals];
@@ -222,25 +240,32 @@ vector<float> assess(const plane& P){ //Assess the atom flags with respect to pl
 		Peripheral[4].displace (-0.5, +0.5, -0.5);Peripheral[5].displace (-0.5, +0.5, +0.5);
 		Peripheral[6].displace (+0.5, -0.5, -0.5);Peripheral[7].displace (+0.5, -0.5, +0.5);
 		Peripheral[8].displace (+0.5, +0.5, -0.5);Peripheral[9].displace (+0.5, +0.5, +0.5);
-		
+				
 		Atoms[Sb[iSb]].Flags |= Active;  // Assuming the centre Sb is active;
 				
 		for (int i=0; i<NofPerihperals; i++) {
 			int indexPeriph = search (Peripheral[i]);
-			if (indexPeriph==-1) continue;  //Searching out out boundary of the supercell
-			
-			if ((Atoms[Sb[iSb]].Flags & (In_Plane|Under_Plane))&&(Atoms[indexPeriph].Flags & (In_Plane|Under_Plane))) {
+			if (indexPeriph==-1) continue;  //Searching out of boundary of the supercell
+
+			if ((Atoms[indexPeriph].Flags & (In_Plane|Under_Plane))) {
 				//If this both are in/under plane
-				if (!(Atoms[indexPeriph].Flags & Dop))  Atoms[indexPeriph].Flags |= Active; //Activate peripheral atom
-				else Atoms[Sb [iSb]].Flags &= (-1-Active);  //De-activate the centre atom
+				if (!(Atoms[indexPeriph].Flags & Dop)) {
+					Atoms[indexPeriph].Flags |= Active; //Activate peripheral atom
+				}
+				else {
+					Atoms[Sb [iSb]].Flags &= (-1-Active);   //De-activate the centre atom
+				}
 			}
+			//printf ("\n");
 		}
 	}	
 	
 	/** Assess the surface activity**/
 	
 	int CountActive = 0;
-	for (int i=0; i<atomsInPlane.size(); i++) CountActive += (Atoms[atomsInPlane[i]].Flags & Active)? 1:0; //If active, then add 1
+	for (int i=0; i<atomsInPlane.size(); i++) {
+		CountActive += (Atoms[atomsInPlane[i]].Flags & Active)? 1:0; //If active, then add 1
+	}
 	
 	vector <float> results (2);
 	results[0] = Sb.size()/ double (Atoms.size());
@@ -301,14 +326,12 @@ vector<float> assess(const plane& P){ //Assess the atom flags with respect to pl
 	}
 	
 	//newX = atom (0,1,0); //Enable manually overriding the newX setting
-	
-	
+
 	Normalizer = newX.Abs();
 	newX.A /= Normalizer;
 	newX.B /= Normalizer;
 	newX.C /= Normalizer;
-	
-	//printf ("Small = %i, %i, %i,%i,%i\n", isZero(0.1), isZero(0.01),isZero(0.001), isZero(0.0001),isZero(0.00001));
+
 	newY = atom(newZ.B * newX.C - newZ.C * newX.B,
 				newZ.C * newX.A - newZ.A * newX.C,
 				newZ.A * newX.B - newZ.B * newX.A);
@@ -399,9 +422,7 @@ int main (int argc, char* argv[]){
 	int K = argv[1][1]-'0';
 	int L = argv[1][2]-'0';
 	
-	stringstream InputSb (string(argv[2], 20));
 	float SbLevel = 0;
-	//InputSb >> SbLevel;
 	
 	BaseAtom = atom (int ((Ahi+Alo)/2), int ((Bhi+Blo)/2), int ((Chi+Clo)/2)); 
 	//!!!Careful: Choice of a base atom can affect the arrangement of atoms
@@ -419,15 +440,17 @@ int main (int argc, char* argv[]){
 
 	vector <vector<float> > Result ; //Rows = Sb level, Cols = Trials
 	vector<float> Ravg; //For storing the average activity
+	vector<float> Rstd; //For storing the standard deviation;
 	const size_t Trials = 100;
 	
-	OutputAverage<<"SbLevel\t"<<"Activity_"<<argv[1]<<endl;
-	for (float SbLevel=0.005; SbLevel<1; SbLevel*=1.1){
+	OutputAverage<<"SbLevel\t"<<"Activity_"<<argv[1]<<"\tStd_"<<argv[1]<<endl;
+	for (float SbLevel=0.001; SbLevel<1; SbLevel*=1.1){
 		
 		
 		Result.push_back (vector<float> (Trials));
 		
 		Ravg.push_back (0);
+		Rstd.push_back (0);
 		OutputTrials<<SbLevel<<'\t';
 		for (size_t iTrial =0; iTrial<Trials; iTrial++){
 			resetAtomFlags(true);
@@ -435,15 +458,20 @@ int main (int argc, char* argv[]){
 			vector <float> R = assess (TestPlane);
 			Result[Result.size()-1][iTrial] = R[1];
 			Ravg [Ravg.size()-1] += R[1] / Trials;
+			Rstd [Rstd.size()-1] += R[1] * R[1];
 			OutputTrials<<R[1]<<"\t";
 		}
-		
+		Rstd [Rstd.size()-1] = sqrt(
+				(Rstd [Rstd.size()-1] - Ravg [Rstd.size()-1]*Ravg [Rstd.size()-1]*Trials)
+				/(Trials-1));
+				
 		OutputTrials << endl;
-		OutputAverage<< SbLevel << "\t" <<Ravg[Ravg.size()-1] <<endl;
+		OutputAverage<< SbLevel << "\t" <<Ravg[Ravg.size()-1] << "\t" <<Rstd[Rstd.size()-1]<<endl;
 
-		printf ("Sb Level : %.5f,  Activity : %.5f", SbLevel, Ravg[Ravg.size()-1]);
+		printf ("Sb Level : %.5f,  Activity : %.5f +/- %.5f", SbLevel, Ravg[Ravg.size()-1], Rstd[Rstd.size()-1]);
 
 		int TellTime = time (NULL)-Start;
+		Start = time (NULL);
 		printf ("\nTime elapsed: %i s\n", TellTime);
 	}
 
